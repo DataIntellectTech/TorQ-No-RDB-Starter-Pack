@@ -1,0 +1,12 @@
+host,port,proctype,procname,U,localtime,g,T,w,load,startwithall,extras,qcmd
+localhost,{KDBBASEPORT}+1,discovery,discovery1,${TORQAPPHOME}/appconfig/passwords/accesslist.txt,1,0,,,${KDBCODE}/processes/discovery.q,1,,q
+localhost,{KDBBASEPORT},segmentedtickerplant,stp1,${TORQAPPHOME}/appconfig/passwords/accesslist.txt,1,0,,,${KDBCODE}/processes/segmentedtickerplant.q,1,-schemafile ${TORQAPPHOME}/database.q -tplogdir ${KDBTPLOG},q
+localhost,{KDBBASEPORT}+5,wdb,wdb1,${TORQAPPHOME}/appconfig/passwords/accesslist.txt,1,1,,,${KDBCODE}/processes/wdb.q,1,,q
+localhost,{KDBBASEPORT}+6,sort,sort1,${TORQAPPHOME}/appconfig/passwords/accesslist.txt,1,1,,,${KDBCODE}/processes/wdb.q,1,-s 2 -parentproctype wdb,q
+localhost,{KDBBASEPORT}+2,idb,db1,${TORQAPPHOME}/appconfig/passwords/accesslist.txt,1,1,,,${KDBCODE}/processes/idb.q,1,-.idb.usemapping 0,q
+localhost,{KDBBASEPORT}+8,idb,db2,${TORQAPPHOME}/appconfig/passwords/accesslist.txt,1,1,,,${KDBCODE}/processes/idb.q,1,-.idb.usemapping 1,q
+localhost,{KDBBASEPORT}+9,idb,db3,${TORQAPPHOME}/appconfig/passwords/accesslist.txt,1,1,,,${KDBCODE}/processes/idb.q,1,-.idb.usemapping 1,q
+localhost,{KDBBASEPORT}+10,idb,db4,${TORQAPPHOME}/appconfig/passwords/accesslist.txt,1,1,,,${KDBCODE}/processes/idb.q,1,-.idb.usemapping 1,q
+localhost,{KDBBASEPORT}+11,idb,db5,${TORQAPPHOME}/appconfig/passwords/accesslist.txt,1,1,,,${KDBCODE}/processes/idb.q,1,-.idb.usemapping 1,q
+localhost,{KDBBASEPORT}+12,idb,db6,${TORQAPPHOME}/appconfig/passwords/accesslist.txt,1,1,,,${KDBCODE}/processes/idb.q,1,-.idb.usemapping 1,q
+localhost,{KDBBASEPORT}+4,rdb,rdb1,${TORQAPPHOME}/appconfig/passwords/accesslist.txt,1,1,180,,${KDBCODE}/processes/rdb.q,1,,q

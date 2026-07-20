@@ -1,0 +1,7 @@
+discovery:pass
+segmentedtickerplant:pass
+wdb:pass
+sort:pass
+idb:pass
+rdb:pass
+admin:admin
