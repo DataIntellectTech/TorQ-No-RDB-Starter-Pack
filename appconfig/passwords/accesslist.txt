@@ -1,5 +1,6 @@
 discovery:pass
 segmentedtickerplant:pass
+feed:pass
 wdb:pass
 sort:pass
 idb:pass

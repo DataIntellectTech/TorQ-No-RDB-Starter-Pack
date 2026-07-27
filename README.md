@@ -125,7 +125,7 @@ Start the stack from your TorQ checkout, pointing `SETENV` at this pack's env fi
 SETENV=/path/to/TorQ-No-RDB-Starter-Pack/nordb-env.sh /path/to/TorQ/torq.sh start all
 ```
 
-This brings up the minimal no-RDB stack: a tickerplant, a writer (WDB), a sort process and a single memory-mapped DB, plus the discovery service. Stop it with the same command and `stop all`:
+This brings up the minimal no-RDB stack: a tickerplant, a writer (WDB), a sort process and a single memory-mapped DB, plus the discovery service and a feed. Stop it with the same command and `stop all`:
 
 > **A note on naming.** What this README calls a **DB** is, in the config, a TorQ **IDB**: the processes are `proctype idb` with names `db1`, `db2`, … (see [`appconfig/process.csv`](appconfig/process.csv)). TorQ's intraday-database process already does most of what's needed here: it serves an on-disk partition and reloads it when the writer flushes, so the pack builds on it rather than adding a new proctype. That's also why the read-mode settings and code live under `appconfig/settings/idb.q` and [`code/idb/`](code/idb/mapping.q). The difference is what it points at: a stock IDB serves a separate intraday directory, while here `savedir`, `hdbdir` and the DBs' database are all one directory, so these IDBs serve live *and* history.
 
@@ -135,8 +135,14 @@ SETENV=/path/to/TorQ-No-RDB-Starter-Pack/nordb-env.sh /path/to/TorQ/torq.sh stop
 
 Processes listen from `KDBBASEPORT` upward; connect to any of them with the default credentials `admin:admin`.
 
+### The feed
+
+[`code/tick/feed.q`](code/tick/feed.q) (adapted from the [TorQ Finance Starter Pack](https://github.com/DataIntellectTech/TorQ-Finance-Starter-Pack)) is a fake market-data generator: random trades and quotes across ten well-known tickers, published to the tickerplant every 200ms. It's there so a fresh `start all` gives you a system with data actually moving through it — feed → TP → WDB → disk → DB — rather than an empty database to stare at. Query any DB a second after startup and today's rows are already on disk and visible.
+
+It's a demo source, not a load generator: a few hundred rows a second, enough to watch the pipeline work. The benchmarks deliberately bypass it and seed the database directly (see [Running the benchmarks](#running-the-benchmarks)).
+
 ## Community License Limits
 
-The KDB-X [community edition](https://code.kx.com/kdb-x/releases/release-notes-latest.html#2-qlim-resource-limits) caps resources such as concurrent connections and memory. The default setup in this pack is deliberately an absolute minimum — a tickerplant, a writer, a sort process and a single DB (plus the discovery service) — so it starts comfortably within those limits. You can add processes back (extra DBs, a gateway, monitoring, and so on) as your license allows.
+The KDB-X [community edition](https://code.kx.com/kdb-x/releases/release-notes-latest.html#2-qlim-resource-limits) caps resources such as concurrent connections and memory. The default setup in this pack is deliberately an absolute minimum — a tickerplant, a writer, a sort process and a single DB, plus the discovery service and the feed — so it starts comfortably within those limits. You can add processes back (extra DBs, a gateway, monitoring, and so on) as your license allows.
 
 Because this is a no-RDB architecture, live data is served straight from disk rather than held in an in-memory RDB, so overall memory use _by kdb+_ is lower than an equivalent RDB-based setup — making it easier to stay within the community edition's limits.
