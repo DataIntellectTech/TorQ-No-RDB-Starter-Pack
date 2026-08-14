@@ -17,11 +17,12 @@ export BENCH_SORT=$((KDBBASEPORT + 6))            # sort1
 export BENCH_DEFERRED=$((KDBBASEPORT + 2))        # db1  - setup A, deferred reader
 export BENCH_RDB=$((KDBBASEPORT + 4))             # rdb1 - setup D, in-memory control
 export BENCH_MAPPED=$((KDBBASEPORT + 8))          # db2  - setup B, mapped reader
+export BENCH_MEMATTR=$((KDBBASEPORT + 13))        # db7  - setup C, mapped + in-memory attribute
 export BENCH_PAR="$((KDBBASEPORT + 9)) $((KDBBASEPORT + 10)) $((KDBBASEPORT + 11)) $((KDBBASEPORT + 12))"
-                                                  # db3-6 - setup C, parallel mapped readers
-export BENCH_NPAR=$(set -- $BENCH_PAR; echo $#)   # how many readers setup C uses
+                                                  # db3-6 - setup D, parallel mapped readers
+export BENCH_NPAR=$(set -- $BENCH_PAR; echo $#)   # how many readers setup D uses
 
 # every port the bench topology must have listening before it can run
 # (discovery is deliberately excluded - nothing here queries it directly)
-export BENCH_PORTS="$BENCH_STP $BENCH_WDB $BENCH_SORT $BENCH_DEFERRED $BENCH_RDB $BENCH_MAPPED $BENCH_PAR"
+export BENCH_PORTS="$BENCH_STP $BENCH_WDB $BENCH_SORT $BENCH_DEFERRED $BENCH_RDB $BENCH_MAPPED $BENCH_MEMATTR $BENCH_PAR"
 export BENCH_NPORTS=$(set -- $BENCH_PORTS; echo $#)

@@ -9,4 +9,5 @@ localhost,{KDBBASEPORT}+9,idb,db3,${TORQAPPHOME}/appconfig/passwords/accesslist.
 localhost,{KDBBASEPORT}+10,idb,db4,${TORQAPPHOME}/appconfig/passwords/accesslist.txt,1,1,,,${KDBCODE}/processes/idb.q,1,-.idb.usemapping 1,q
 localhost,{KDBBASEPORT}+11,idb,db5,${TORQAPPHOME}/appconfig/passwords/accesslist.txt,1,1,,,${KDBCODE}/processes/idb.q,1,-.idb.usemapping 1,q
 localhost,{KDBBASEPORT}+12,idb,db6,${TORQAPPHOME}/appconfig/passwords/accesslist.txt,1,1,,,${KDBCODE}/processes/idb.q,1,-.idb.usemapping 1,q
+localhost,{KDBBASEPORT}+13,idb,db7,${TORQAPPHOME}/appconfig/passwords/accesslist.txt,1,1,,,${KDBCODE}/processes/idb.q,1,-.idb.usemapping 1 -.idb.usememattr 1,q
 localhost,{KDBBASEPORT}+4,rdb,rdb1,${TORQAPPHOME}/appconfig/passwords/accesslist.txt,1,1,180,,${KDBCODE}/processes/rdb.q,1,,q

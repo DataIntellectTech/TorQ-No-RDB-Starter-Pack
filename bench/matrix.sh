@@ -1,13 +1,17 @@
 #!/bin/bash
 # =============================================================================
-# bench/matrix.sh - latency matrix across FOUR setups, all server-side timed (\t):
+# bench/matrix.sh - latency matrix across FIVE setups, all server-side timed (\t):
 #   A = db1  deferred (1 reader)                    $BENCH_DEFERRED
 #   B = db2  mapped   (1 reader)                    $BENCH_MAPPED
-#   C = db3-6 mapped, N readers IN PARALLEL         $BENCH_PAR
-#   D = rdb1 in-memory (1 reader)                   $BENCH_RDB
-# A/B/D are per-query ms (one reader). C is the EFFECTIVE ms/query when N readers
+#   C = db7  mapped + in-memory attribute (1 reader) $BENCH_MEMATTR
+#   D = db3-6 mapped, N readers IN PARALLEL         $BENCH_PAR
+#   E = rdb1 in-memory (1 reader)                   $BENCH_RDB
+# A/B/C/E are per-query ms (one reader). D is the EFFECTIVE ms/query when N readers
 # serve the load in parallel = aggregate throughput as latency = max(server-side
-# time over the N) / (N x reps). C ~= B/N if it scales; compare C against D.
+# time over the N) / (N x reps). D ~= B/N if it scales; compare D against E.
+# C is B plus -.idb.usememattr 1: the live partition carries a real `g# on sym, so
+# the filter_sym* rows should drop to RDB (column E) latency. Everything else should
+# track B closely - that is the point of the column.
 # Ports come from bench-env.sh (derived from KDBBASEPORT), sourced below so this
 # script works standalone as well as via run.sh.
 # Usage: REPS=10 bash bench/matrix.sh
@@ -43,20 +47,37 @@ ORDER=(filter_sym filter_sym_sel filter_time_lg filter_time_sm agg_by_sym filter
 
 one(){ $Q "$CC" -q -st -port "$1" -reps "$REPS" -query "$2" 2>&1 | awk '/^RESULT/{print $3}'; }
 
-printf "ms/query, server-side, REPS=%s   (C = effective ms/q across %s parallel readers)\n\n" "$REPS" "$BENCH_NPAR"
-printf "%-14s %12s %12s %14s %12s\n" "query" "A_deferred" "B_mapped" "C_${BENCH_NPAR}par(eff)" "D_rdb"
-printf -- "------------------------------------------------------------------------\n"
+# Preflight: confirm db7 really has the in-memory attribute applied. Without this a
+# silently-ignored flag (bad extras string, deferred mode, sort.csv not found) would
+# just look like "the overlay does not help" instead of "the overlay is not on".
+MEMCHK=$($Q -q 2>/dev/null <<'EOF'
+p:"J"$getenv`BENCH_MEMATTR; h:@[hopen;`$":localhost:",string[p],":admin:admin";0Ni];
+-1 $[null h;"unreachable";h"\"usememattr=\",string[.idb.usememattr],\" attr=\",(string attr .idb.memcols[`trade;`sym]),\" rows=\",string count .idb.memcols[`trade;`sym]"]; exit 0
+EOF
+)
+echo "db7 (column C) state: ${MEMCHK:-<could not query>}"
+case "$MEMCHK" in
+  *"usememattr=1 attr=g"*) : ;;
+  *) echo "WARNING: db7 has no \`g# in-memory attribute - column C is NOT measuring what it claims" ;;
+esac
+echo ""
+
+printf "ms/query, server-side, REPS=%s   (D = effective ms/q across %s parallel readers)\n\n" "$REPS" "$BENCH_NPAR"
+printf "%-14s %12s %12s %12s %14s %12s\n" "query" "A_deferred" "B_mapped" "C_memattr" "D_${BENCH_NPAR}par(eff)" "E_rdb"
+printf -- "-------------------------------------------------------------------------------------\n"
 
 TMP=$(mktemp -d)
 for k in "${ORDER[@]}"; do
   q="${LBL[$k]}"
   A=$(one "$BENCH_DEFERRED" "$q")
   B=$(one "$BENCH_MAPPED" "$q")
-  D=$(one "$BENCH_RDB" "$q")
+  C=$(one "$BENCH_MEMATTR" "$q")
+  E=$(one "$BENCH_RDB" "$q")
+  rm -f "$TMP"/*
   for p in $BENCH_PAR; do $Q "$CC" -q -st -port "$p" -reps "$REPS" -query "$q" > "$TMP/$p" 2>&1 & done
   wait
-  Cmax=$(cat "$TMP"/* | awk '/^RESULT/{print $3}' | sort -n | tail -1)
-  awk -v k="$k" -v a="$A" -v b="$B" -v c="$Cmax" -v d="$D" -v r="$REPS" -v n="$BENCH_NPAR" 'BEGIN{
-    printf "%-14s %12.2f %12.2f %14.2f %12.2f\n", k, a/r, b/r, c/(r*n), d/r }'
+  Dmax=$(cat "$TMP"/* | awk '/^RESULT/{print $3}' | sort -n | tail -1)
+  awk -v k="$k" -v a="$A" -v b="$B" -v c="$C" -v d="$Dmax" -v e="$E" -v r="$REPS" -v n="$BENCH_NPAR" 'BEGIN{
+    printf "%-14s %12.2f %12.2f %12.2f %14.2f %12.2f\n", k, a/r, b/r, c/r, d/(r*n), e/r }'
 done
 rm -rf "$TMP"
