@@ -105,7 +105,7 @@ refreshliveslot:{
 // the re-sorted partition leaves the whole map stale and \l does not refresh a
 // mapped session.
 ensuremapped:{[force]
-    if[0=count .Q.pv;:()];                                                     // no partitions on disk yet
+    if[0=count @[value;`.Q.pv;()];:()];                                        // no partitions on disk yet - .Q.pv is UNDEFINED (not empty) on a partitionless db
     if[force or (0=count .Q.pm) or any (count .Q.pv) <> count each .Q.pm each .Q.pt;
         .Q.MAP[]];                                                             // forced / first map / coverage gap -> full remap
     refreshliveslot[];                                                         // runs after .Q.MAP[] too: it rebuilds every slot
