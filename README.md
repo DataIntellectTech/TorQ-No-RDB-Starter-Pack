@@ -18,7 +18,7 @@ So the trade is really:
 
 | | traditional RDB | no-RDB DBs |
 |---|---|---|
-| a *selective, indexed* query | **wins** (often by a lot) | scans instead |
+| a *selective, indexed* query | **wins** (often by a lot) | scans instead *(unless `usememattr` is on)* |
 | everything else (most scans, aggregates) | ~the same per query | ~the same per query |
 | concurrent query **throughput** | single-threaded | **N DBs in parallel, sharing the OS page cache** |
 | operational complexity | RDB + HDB + gateway | one DB process |
@@ -54,13 +54,17 @@ A few deliberate changes make the single-database model work:
 - **mapped** (the default) — maps the whole database once (via `.Q.MAP`) and keeps it mapped, refreshing only the live partition on each flush, so reads skip the per-query mapping entirely. Fastest reads; query latency stays flat as history grows.
 - **deferred** — the stock kdb+ behaviour above: re-map per query. Slower, and increasingly so as history grows, but simple and always fresh.
 
-The mode is a per-process flag, `-.idb.usemapping` (`1` = mapped, the default; `0` = deferred), set in the `extras` column of `process.csv` — see `bench/process.csv`, which runs one DB each way.
+The mode is a per-process flag, `-.idb.usemapping` (`1` = mapped, the default; `0` = deferred), set in the `extras` column of `process.csv` — see `bench/process.csv`, which runs one DB each way. A second per-process flag, `-.idb.usememattr`, adds an in-memory index for the live partition on top of mapped mode — see [Attributes](#key-design-choices) below.
 
 Both serve identical results; mapped is just faster. On the [benchmark](#benchmarks)'s single-day, 50M-row database, deferred costs **5–50% more per query** depending on the query; least on compute-heavy aggregates, where the mapping cost is lost in the work, and most on cheap scans, where it dominates. That gap widens with the number of partitions and columns each query touches, so on a database with real history it will be larger than these one-partition figures suggest.
 
 **Page cache (where the data actually lives.)** Today's partition is warm as a *side effect of writing it*: the WDB has just written those pages, so they're already resident before any DB reads them, and because the cache belongs to the kernel rather than to any one process, every DB shares it instead of each holding its own copy. That's what makes the freshest data (which is also the most-queried data) free to serve. If you want to manually control exactly what stays in the page cache you can: tools like [`vmtouch`](https://hoytech.com/vmtouch/) will pull a directory into cache (`vmtouch -t`) or pin it there (`vmtouch -l`). The pack deliberately doesn't, leaving it to the kernel, which is the right default for most workloads.
 
-**Attributes (the one place the RDB still wins.)** kdb+ attributes like `g#` (grouped) make selective lookups on a column near-instant, but they **can't be maintained on a partition that's being continuously appended to**. So *today's* partition has no index: an intraday `where sym=AAPL` scans it. An in-memory RDB keeps `g#` on `sym`, so it wins those selective intraday lookups, sometimes by 100×+. At end of day this pack sorts the day's partition and applies a `p#` (parted) attribute, so every *previous* day gets fast lookups too; only the live day is un-indexed. And if a handful of selective live queries genuinely matter, the no-RDB model doesn't stop you adding a small, *targeted* in-memory cache or CEP process for just those, which is much less resource intensive than full general-purpose RDB.
+**Attributes (the one place the RDB still wins — mostly.)** kdb+ attributes like `g#` (grouped) make selective lookups on a column near-instant, but an index-carrying attribute **can't be maintained on an on-disk column that's being appended to**: the index lives in a footer after the data, so kdb+ drops it on every append rather than shift it under any memory-mapped reader. So *today's* partition has no index: an intraday `where sym=AAPL` scans it. An in-memory RDB keeps `g#` on `sym`, so it wins those selective intraday lookups, sometimes by 100×+. At end of day this pack sorts the day's partition and applies a `p#` (parted) attribute, so every *previous* day gets fast lookups too; only the live day is un-indexed. And if a handful of selective live queries genuinely matter, the no-RDB model doesn't stop you adding a small, *targeted* in-memory cache or CEP process for just those, which is much less resource intensive than full general-purpose RDB.
+
+That limitation is specific to *disk* — in memory, `g#` survives an append fine. So there is now an **experimental, opt-in** overlay (`-.idb.usememattr 1`, default off, mapped mode only) that keeps a heap-resident `g#` copy of the indexed column(s) for the live partition and splices it into that partition's map in place of the on-disk column, leaving every other column mapped. The engine sees a genuine attribute, so it's fully transparent: plain q-sql, `by sym`, `aj`, and queries with no date filter all benefit with no change at the call site — `p#` serves history, in-memory `g#` serves today. The copy is derived from the disk file on each flush, appending only the new rows, so there's no second source of truth and no writer changes. Which columns get it comes from `sort.csv`, the same file the EOD sort uses to place `p#`.
+
+It isn't free: roughly 24 bytes per row per process (~1.1 GB for a 50M-row day), and unlike the mapped columns that memory is *private to each DB* rather than shared page cache, so N DBs pay it N times. Enable it on readers serving selective lookups and `by sym` aggregation, which both get faster; leave it off on ones dominated by large scans of *un-indexed* columns, which get ~10–25% slower (see [Benchmarks](#benchmarks)). Being per-process, it's easy to run a mixed fleet over the same directory — some DBs indexed, some lean. It leans on `.Q.pm`, which is undocumented, and has a known gap around the end-of-day partition swap — hence off by default. See [`code/idb/mapping.q`](code/idb/mapping.q).
 
 **End-of-day rollover.** Sorting the live partition is a little tricky: there's no gateway to hold queries and no separate HDB to move to as the DBs are serving the very partition being sorted. So the pack copies today's partition to a hidden staging directory, sorts the *copy*, then swaps it in with two atomic renames. DBs never observe a half-sorted state, and mapped DBs keep serving right across the swap. Zero downtime, no gateway required.
 
@@ -68,16 +72,17 @@ Both serve identical results; mapped is just faster. On the [benchmark](#benchma
 
 The `bench/` directory compares this design to a traditional RDB on the same data. Representative figures on a **50M-row synthetic trading day** (server-side ms per query; reproduce with `bash bench/run.sh`):
 
-| query | 1 RDB | 1 mapped DB | 4 DBs in parallel |
-|---|---:|---:|---:|
-| selective lookup, **indexed** col (`sym`, ~5k rows) | **0.7** | 370 | 96 |
-| selective lookup, **un-indexed** col (`tradetime`, ~5k rows) | 115 | 132 | 33 |
-| aggregate (`avg`/`sum` by `sym`) | 540 | 610 | 170 |
-| filtered aggregate | 1220 | 1030 | 300 |
+| query | 1 RDB | 1 mapped DB | 1 mapped DB + `usememattr` | 4 DBs in parallel |
+|---|---:|---:|---:|---:|
+| selective lookup, **indexed** col (`sym`, ~5k rows) | **0.5** | 392 | **0.6** | 101 |
+| selective lookup, **un-indexed** col (`tradetime`, ~5k rows) | 124 | 118 | 136 | 33 |
+| aggregate (`avg`/`sum` by `sym`) | 590 | 660 | 576 | 181 |
+| filtered aggregate | 1247 | 1153 | 1184 | 296 |
 
 Important notes:
 
-- **The RDB's edge is the *index*, not memory.** That makes sense since, of course, the DBs are *also* ideally serving from memory, just the OS page cache the memory-mapped files live in, instead of the RDB's own heap. Both are reading RAM; the only real difference is the index. Same 5k-row result, in memory both times: *with* an index it's 0.7 ms, *without* one it's 115 ms — a full scan, right in the DBs' ballpark. Memory alone buys almost nothing.
+- **The RDB's edge is the *index*, not memory.** That makes sense since, of course, the DBs are *also* ideally serving from memory, just the OS page cache the memory-mapped files live in, instead of the RDB's own heap. Both are reading RAM; the only real difference is the index. Same 5k-row result, in memory both times: *with* an index it's 0.5 ms, *without* one it's 124 ms — a full scan, right in the DBs' ballpark. Memory alone buys almost nothing. The third column is the proof: give the DB the same index and it lands at 0.6 ms, on the same on-disk data.
+- **`usememattr` closes that gap, at a price.** The in-memory attribute (column 3, off by default — see [Attributes](#key-design-choices)) takes the selective indexed lookup from 392 ms to 0.6 ms, a large indexed lookup (2.5M rows on `sym`) from 588 ms to 235 ms, and `by sym` aggregation from 660 ms to 576 ms — all to RDB parity or better, since the grouping reads straight off the index. It is not free everywhere: a large scan of an *un-indexed* column that also returns the indexed one runs ~10–25% slower, and the RDB shows the same pattern, so it looks like the ~1.1 GB of private heap displacing page cache rather than anything about the attribute itself.
 - **On anything that scans, one DB ≈ one RDB** (within ~0–20%, sometimes even slightly faster), and **four DBs beat the single RDB 3–4×**. The RDB is single-threaded, the DBs aren't.
 - **The numbers above compare the average time for one query over multiple runs.**  This is particularly important to note for the column with 4 DBs.  These numbers cleanly scale to 3-4x faster **if you need to run 4 queries**.  For a single query, having 4 processes obviously does not help you.  Query **throughput** goes up: four DBs serve a fixed batch of queries **~3.6× faster** than one RDB.
 
@@ -145,4 +150,4 @@ It's a demo source, not a load generator: a few hundred rows a second, enough to
 
 The KDB-X [community edition](https://code.kx.com/kdb-x/releases/release-notes-latest.html#2-qlim-resource-limits) caps resources such as concurrent connections and memory. The default setup in this pack is deliberately an absolute minimum — a tickerplant, a writer, a sort process and a single DB, plus the discovery service and the feed — so it starts comfortably within those limits. You can add processes back (extra DBs, a gateway, monitoring, and so on) as your license allows.
 
-Because this is a no-RDB architecture, live data is served straight from disk rather than held in an in-memory RDB, so overall memory use _by kdb+_ is lower than an equivalent RDB-based setup — making it easier to stay within the community edition's limits.
+Because this is a no-RDB architecture, live data is served straight from disk rather than held in an in-memory RDB, so overall memory use _by kdb+_ is lower than an equivalent RDB-based setup — making it easier to stay within the community edition's limits. (The optional in-memory attribute overlay trades some of that back — see [Attributes](#key-design-choices).)
